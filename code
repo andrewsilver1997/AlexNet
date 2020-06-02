@@ -1,0 +1,166 @@
+import torch
+import torchvision
+import matplotlib.pyplot as plt
+import torch.nn as nn
+import torchvision.transforms as transforms
+from torchsummary import summary
+import numpy as np
+import torch.optim as optim
+from visdom import Visdom
+
+#hyperparameters
+Batch_size = 10
+learning_rate = 0.01
+EPOCH = 4
+classes = ('bad','good') 
+
+#Load data
+train_data = torchvision.datasets.ImageFolder(
+    "D:/ML_project/train_edge",
+    transform = transforms.Compose([
+        transforms.CenterCrop((227,227)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean = (0.5,0.5,0.5),std = (0.5,0.5,0.5))
+    ])
+)
+train_loader = torch.utils.data.DataLoader(
+    train_data,
+    batch_size = Batch_size,
+    shuffle = True,
+    num_workers = 0
+)
+
+test_data = torchvision.datasets.ImageFolder(
+    "D:/ML_project/test_edge",
+    transform = transforms.Compose([
+        transforms.CenterCrop((227,227)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean = (0.5,0.5,0.5),std = (0.5,0.5,0.5))
+    ])
+)
+test_loader = torch.utils.data.DataLoader(
+    test_data,
+    batch_size = Batch_size,
+    shuffle = True,
+    num_workers = 0
+)
+
+#visualize data
+dataiter = iter(train_loader)
+image,label = dataiter.next()
+
+plt.figure(figsize = (10,10))
+for i in range (5):
+    plt.subplot(5,5,i+1)
+    plt.grid(False)
+    plt.imshow(np.array(image[i]).transpose(1,2,0))
+    plt.xlabel(classes[label[i]])
+    plt.tight_layout()
+plt.show()
+    
+#Alex net
+class alexnet(nn.Module):
+    def __init__(self):
+        super(alexnet,self).__init__()
+        self.layer1 = nn.Sequential(
+            nn.Conv2d(3,96,kernel_size = 11,stride = 4),
+            nn.ReLU(inplace = True),
+            nn.MaxPool2d(kernel_size = 3,stride = 2)
+        )#output_size = (27*27*96)
+        self.layer2 = nn.Sequential(
+            nn.Conv2d(96,256,kernel_size = 5,padding = 2),
+            nn.ReLU(inplace = True), 
+            nn.MaxPool2d(kernel_size = 3,stride = 2)
+        )#output_size = (13*13*256)
+        self.layer3 = nn.Sequential(
+            nn.Conv2d(256,384,kernel_size = 3,padding = 1),
+            nn.ReLU(inplace = True)
+        )#output_size = (13*13*384)
+        self.layer4 = nn.Sequential(
+            nn.Conv2d(384,384,kernel_size = 3,padding = 1),
+            nn.ReLU(inplace = True)
+        )#output_size = (13*13*384)
+        self.layer5 = nn.Sequential(
+            nn.Conv2d(384,256,kernel_size = 3,padding = 1),
+            nn.ReLU(inplace = True),
+            nn.MaxPool2d(kernel_size = 3,stride = 2)
+        )#output_size = (6*6*256)
+        self.layer6 = nn.Sequential(
+            nn.Linear(6*6*256,4096),
+            nn.ReLU(inplace = True),
+            nn.Dropout()
+        )#output_size = 4096
+        self.layer7 = nn.Sequential(
+            nn.Linear(4096,4096),
+            nn.ReLU(inplace = True),
+            nn.Dropout()
+        )#output_size = 4096
+        self.layer8 = nn.Linear(4096,1000)#output_size = 10000
+            
+        
+        
+    def forward(self,x):
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+        x = self.layer5(x)
+        x = torch.flatten(x,1)
+        x = self.layer6(x)
+        x = self.layer7(x)
+        x = self.layer8(x)
+        return x
+        
+Network = alexnet()
+summary(Network,input_size = (3,227,227))
+
+criterion = nn.CrossEntropyLoss()
+optimizer = optim.SGD(Network.parameters(),lr = learning_rate, momentum = 0.9)
+
+viz = Visdom()
+!python -m visdom.server
+viz.line([0.],[0.],win = 'train_loss',opts = dict(title = 'train loss'))
+global_step = 0
+
+#train the model
+for epoch in range(EPOCH):
+    for i,(x,y) in enumerate(train_loader) :
+        optimizer.zero_grad()
+        out = Network(x)
+        loss = criterion(out,y)
+        loss.backward()
+        optimizer.step() 
+        global_step += 1
+        viz.line([loss.item()], [global_step], win = 'train_loss',update = 'append')
+        
+        
+
+print('Finish training process')
+
+#visualize the test sets
+dataiter = iter(test_loader)
+image,label = dataiter.next()
+
+plt.figure(figsize = (10,10))
+for i in range (5):
+    plt.subplot(5,5,i+1)
+    plt.grid(False)
+    plt.imshow(np.array(image[i]).transpose(1,2,0))
+    plt.xlabel(classes[label[i]])
+    plt.tight_layout()
+plt.show()
+
+#test the model
+Network.eval()
+with torch.no_grad():
+    correct = 0
+    total = 0
+    for images,label in test_loader:
+            out = Network(images)
+            loss = criterion(out,label)
+            _,predicted = torch.max(out,1)
+            total += label.size(0)
+            correct += (predicted == label).sum().item()
+            
+            
+    print('The accuracy on the %d test images is  %d%%'%(total,100*correct/total))
